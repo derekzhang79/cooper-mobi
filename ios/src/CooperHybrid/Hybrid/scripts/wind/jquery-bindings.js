@@ -58,7 +58,7 @@
             };
 			
 			var fail = function(result) {
-				t.complete("fail", result);
+				t.complete("failure", result);
 			}
             Cordova.exec(success, fail, serviceName, actionName, params);
         });
