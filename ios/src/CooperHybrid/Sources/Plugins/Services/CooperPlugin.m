@@ -467,7 +467,15 @@
 
 - (void)debug:(NSMutableArray *)arguments withDict:(NSMutableDictionary *)options
 {
+    NSString *callbackId = [arguments objectAtIndex:0];
+    NSMutableDictionary *resultCode = [NSMutableDictionary dictionary];
+    
     NSLog(@"JS端日志: \r\n -------------- %@", options);
+    [resultCode setObject:[NSNumber numberWithBool:YES] forKey:@"status"];
+    
+    CDVPluginResult *result = [CDVPluginResult resultWithStatus: CDVCommandStatus_OK messageAsDictionary:resultCode];    
+    NSString *jsString = [result toSuccessCallbackString:callbackId];
+    [self writeJavascript:jsString];
 }
 
 #pragma mark - 回调相关

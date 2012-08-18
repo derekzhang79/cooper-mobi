@@ -38,6 +38,20 @@
         }
     }
     //获取指定ID的任务，从本地内存加载
+	var loadTaskAsync = eval(Wind.compile('async', function (taskId) {
+		if (tasksInCurrentList == null) {
+			var result = $await(loadTasksInCurrentListAsync(pageData.listId));
+			if(result) {
+				var task = loadTaskFromLocal(taskId);
+				return task;
+			}
+        }
+        else {
+            var task = loadTaskFromLocal(taskId);
+            return task;
+        }
+		return null;
+	}));
     function loadTask(taskId, callback) {
         if (tasksInCurrentList == null) {
             loadTasksInCurrentList(pageData.listId, function () {
@@ -110,6 +124,21 @@
         ul.listview('refresh');
     }
     //加载并显示任务列表
+	var loadAndShowTaskListsAsync = eval(Wind.compile('async', function () {
+		showLoading();
+		var result = $await(getTasklistsAsync());
+		if(result) {
+			if (result.status) {
+                showTaskLists(result.data.taskLists);
+                taskLists = result.data.taskLists;
+                hideLoading();
+            }
+            else {
+                hideLoading();
+                alert(result.message);
+            }
+		}
+	}));
     function loadAndShowTaskLists() {
         showLoading();
         getTasklists(function (result) {
@@ -216,24 +245,10 @@
                 var taskId = $(this).attr("id");
                 var imgUrl = $(this).attr("src");
                 if (imgUrl.indexOf('images/complete-small.png') != -1) {
-                    updateTaskProperty(taskId, 'isCompleted', 'false', function (result) {
-                        if (result.status) {
-                            $('#taskUl #' + taskId).attr("src", 'images/incomplete-small.png');
-                        }
-                        else {
-                            alert(result.message);
-                        }
-                    });
+					startUpdateTaskPropertyAsync(taskId, 'isCompleted', 'false').start();
                 }
                 else if (imgUrl.indexOf('images/incomplete-small.png') != -1) {
-                    updateTaskProperty(taskId, 'isCompleted', 'true', function (result) {
-                        if (result.status) {
-                            $('#taskUl #' + taskId).attr("src", 'images/complete-small.png');
-                        }
-                        else {
-                            alert(result.message);
-                        }
-                    });
+					startUpdateTaskPropertyAsync(taskId, 'isCompleted', 'true').start();
                 }
                 //停止冒泡，确保不会跳转到任务详情页
                 event.stopPropagation();
@@ -278,6 +293,28 @@
         }
     }
     //加载并显示指定任务列表中的符合条件的所有任务
+	var loadAndShowTasksAsync = eval(Wind.compile('async', function (listId, isCompleted) {
+		$("#taskPage #addNewTaskButton").attr("href", "#taskEditPage?listId=" + listId + "&isCompleted=" + isCompleted);
+        $("#taskPage #addFirstTaskButton").attr("href", "#taskEditPage?listId=" + listId + "&isCompleted=" + isCompleted);
+        $("#taskPage #showAllTasksButton").attr("href", "#taskPage?listId=" + listId + "&isCompleted=all");
+        $("#taskPage #showCompletedTasksButton").attr("href", "#taskPage?listId=" + listId + "&isCompleted=true");
+        $("#taskPage #showUnCompletedTasksButton").attr("href", "#taskPage?listId=" + listId + "&isCompleted=false");
+        showLoading();
+	
+		var result = $await(getTasksByPriorityAsync(listId, isCompleted));
+		if(result) {
+			if (result.status) {
+                tasksInCurrentList = result.data.tasks;
+                isCurrentTaskListEditable = result.data.isListEditable;
+                showTasks(listId, result.data.tasks, isCompleted);
+                hideLoading();
+            }
+            else {
+                hideLoading();
+                alert(result.message);
+            }
+		}
+	}));
     function loadAndShowTasks(listId, isCompleted) {
         $("#taskPage #addNewTaskButton").attr("href", "#taskEditPage?listId=" + listId + "&isCompleted=" + isCompleted);
         $("#taskPage #addFirstTaskButton").attr("href", "#taskEditPage?listId=" + listId + "&isCompleted=" + isCompleted);
@@ -389,6 +426,28 @@
         }
     }
     //更新一个Task的单个属性，任务详情页面会用到此函数
+	var updateTaskPropertyAsync = eval(Wind.compile('async', function (taskId, propertyName, propertyValue) {
+		var task = $await(loadTaskAsync(taskId));
+		if(task) {
+            //根据判断更新相应属性
+            if (propertyName == "priority") {
+                task.priority = propertyValue;
+                task.isDirty = true;
+            }
+            else if (propertyName == "dueTime") {
+                task.dueTime = propertyValue;
+                task.isDirty = true;
+            }
+            else if (propertyName == "isCompleted") {
+                task.isCompleted = propertyValue;
+                task.isDirty = true;
+            }
+
+			var result = $await(updateTaskAsync(taskId, task, getTaskChanges(task)));
+			return result;
+		}
+		return null;
+	}));
     function updateTaskProperty(taskId, propertyName, propertyValue, callback) {
         loadTask(taskId, function (task) {
             //如果不存在则直接退出
@@ -461,7 +520,216 @@
         }
         return false;
     }
+	
+	var startLoginAsync = eval(Wind.compile('async', function (userName, password, type) {
+		var result = $await(loginAsync(userName, password, type));
+		if(result) {
+			if (!result.status) {
+				alert(result.message);
+			}
+			else {
+				if (isMobileDevice()) {
+					var result = $await(syncTaskListsAsync(null));
+					if(result) {
+						if (result.status) {
+							hideLoading();
+							showPage("taskListPage");
+						}
+						else {
+							hideLoading();
+							alert(result.message);
+						}
+					}
+				}
+				else {
+					hideLoading();
+					$.cookie('cooper_web_loginUser', userName);
+					showPage("taskListPage");
+				}
+			}
+		}
+	}));
+	
+	var startSkipLoginAsync = eval(Wind.compile('async', function (userName, password, type) {
+		var result = $await(loginAsync(userName, password, type));
+		if(result) {
+			if (!result.status) {
+				alert(result.message);
+			}
+			else {
+				if (!result.status) {
+                    alert(result.message);
+                }
+                else {
+                    showPage("taskListPage");
+                }
+			}
+		}
+	}));
+	
+	var startLogoutAsync = eval(Wind.compile('async', function () {
+		var result = $await(logoutAsync());
+		if(result) {
+			if (!result.status) {
+				hideLoading();
+                alert(result.message);
+            }
+            else {
+				hideLoading();
+                $('#backToLoginPageButton').click();
+            }
+		}
+	}));
+	
+	var startCreateTasklistAsync = eval(Wind.compile('async', function (taskListId, taskListName) {
+		var result = $await(createTasklistAsync(taskListId, taskListName));
+		if(result) {
+			if (!result.status) {
+                alert(result.message);
+            }
+            else {
+                showPage("taskListPage");
+            }
+		}
+	}));
+	
+	var startSyncTaskListsAsync = eval(Wind.compile('async', function (tasklistId) {
+		if(tasklistId == null) {
+			var result = $await(syncTaskListsAsync(tasklistId));
+			if (result) {
+				if (result.status) {
+					var result1 = $await(getTasklistsAsync());
+					if(result1) {
+						if (result1.status) {
+							showTaskLists(result1.data.taskLists);
+							taskLists = result1.data.taskLists;
+							hideLoading();
+						}
+						else {
+							hideLoading();
+							alert(result.message);
+						}
+					}
+				}
+				else {
+					hideLoading();
+					alert(result.message);
+				}
+			}
+		}
+		else {
+			var result = $await(syncTaskListsAsync(tasklistId));
+			if (result) {
+				if (result.status) {
+					var result = $await(getTasksByPriorityAsync(pageData.listId, pageData.isCompleted));
+					if(result) {
+						if (result.status) {
+							tasksInCurrentList = result.data.tasks;
+							isCurrentTaskListEditable = result.data.isListEditable;
+							showTasks(pageData.listId, result.data.tasks, pageData.isCompleted);
+							hideLoading();
+						}
+						else {
+							hideLoading();
+							alert(result.message);
+						}
+					}
+				}
+				else {
+					hideLoading();
+					alert(result.message);
+				}
+			}
+		}
+	}));
+	
+	var  startCreateTaskAsync = eval(Wind.compile('async', function(tasklistId, task, changes) {
+		var result = $await(createTaskAsync(tasklistId, task, changes));
+		if (result) {
+			if (result.status) {
+				history.back();
+			}
+			else {
+				alert(result.message);
+			}
+		}
+	}));
 
+	var  startUpdateTaskAsync = eval(Wind.compile('async', function(tasklistId, task, changes) {
+		var result = $await(updateTaskAsync(tasklistId, task, changes));
+		if (result) {
+			if (result.status) {
+				var taskInMemory = $await(loadTaskAsync(taskId));
+				if(taskInMemory) {
+					taskInMemory.subject = task.subject;
+					taskInMemory.body = task.body;
+					taskInMemory.priority = task.priority;
+					taskInMemory.dueTime = task.dueTime;
+					taskInMemory.isCompleted = task.isCompleted;
+					taskInMemory.isDirty = false;
+					history.back();
+				}
+			}
+			else {
+				alert(result.message);
+			}
+		}
+	}));
+	
+	var startDeleteTaskAsync = eval(Wind.compile('async', function (tasklistId, taskId) {
+		var result = $await(deleteTaskAsync(pageData.listId, pageData.taskId));
+		if(result) {
+			if (result.status) {
+                history.back();
+            }
+            else {
+                alert(result.message);
+            }
+		}
+	}));
+	
+	var startLoadAndShowTasksAsync = eval(Wind.compile('async', function (listId, isCompleted) {
+		$await(loadAndShowTasksAsync(listId, isCompleted));
+	}));
+	
+	var startGetCurrentUserAsync = eval(Wind.compile('async', function () {
+		var result = $await(getCurrentUserAsync());
+		if(result) {
+			if (result.status) {
+                    if (result.data.username != null && result.data.username != "") {
+                        $('#currentUserName').html(lang.currentLoginUsernameLabel + result.data.username);
+                        $('#logoutButton').show();
+                        $('#backToLoginPageButton').hide();
+                    }
+                    else {alet
+                        $('#currentUserName').html(lang.currentAnonymousUsernameLabel);
+                        $('#logoutButton').hide();
+                        $('#backToLoginPageButton').show();
+                    }
+                }
+		}
+	}));
+	
+	var startLoadAndShowTaskListsAsync = eval(Wind.compile('async', function () {
+		$await(loadAndShowTaskListsAsync());
+	}));
+	
+	var startUpdateTaskPropertyAsync = eval(Wind.compile('async', function (taskId, priorityName, priorityValue) {
+		var result = $await(updateTaskPropertyAsync(taskId, priorityName, priorityValue));
+		if(result) {
+			if (!result.status) {
+                alert(result.message);
+            }
+			else {
+				if (priorityName == 'isCompleted') {
+					if (result.status) {
+						$('#taskUl #' + taskId).attr("src", priorityValue == 'false' ?  'images/incomplete-small.png' : 'images/complete-small.png');
+					}
+				}
+			}
+		}
+	}));
+	
     //----------------------------------------------------------------
     //按钮事件响应绑定
     //----------------------------------------------------------------
@@ -479,57 +747,18 @@
             return;
         }
 		showLoading("登录中...");
-        login(userName, password, "normal", function (result) {
-            if (!result.status) {
-                alert(result.message);
-            }
-            else {
-                if (isMobileDevice()) {
-                    syncTaskLists(null, function (result) {
-                        if (result.status) {
-							hideLoading();
-                            showPage("taskListPage");
-                        }
-                        else {
-							hideLoading();
-                            alert(result.message);
-                        }
-                    });
-                }
-                else {
-					hideLoading();
-                    $.cookie('cooper_web_loginUser', userName);
-                    showPage("taskListPage");
-                }
-            }
-        });
+		startLoginAsync(userName, password, 'normal').start();
     });
     //登录页面:“跳过”按钮事件响应
     $(document).delegate("#loginPage #skipLoginButton", "click", function () {
         if (isMobileDevice()) {
-            login("", "", "anonymous", function (result) {
-                if (!result.status) {
-                    alert(result.message);
-                }
-                else {
-                    showPage("taskListPage");
-                }
-            });
+			startSkipLoginAsync("", "", 'anonymous').start();
         }
     });
     //Setting中的更换账号页面:“注销”按钮事件响应
     $(document).delegate("#setCurrentAccountPage #logoutButton", "click", function () {
 		showLoading("注销中...");
-        logout(function (result) {
-            if (!result.status) {
-				hideLoading();
-                alert(result.message);
-            }
-            else {
-				hideLoading();
-                $('#backToLoginPageButton').click();
-            }
-        });
+        startLogoutAsync().start();
     });
     //新增任务列表页面:“确定”按钮事件响应
     $(document).delegate("#addTaskListPage #saveNewTaskListButton", "click", function () {
@@ -540,38 +769,14 @@
         }
 
         var taskListId = generateNewTaskListId();
-        createTasklist(taskListId, taskListName, function (result) {
-            if (!result.status) {
-                alert(result.message);
-            }
-            else {
-                showPage("taskListPage");
-            }
-        });
+		startCreateTasklistAsync(taskListId, taskListName).start();
     });
     //任务列表页面:“刷新”按钮事件响应
     $(document).delegate("#taskListPage #refreshTaskListsButton", "click", function () {
         if (isMobileDevice()) {
             showLoading();
-            syncTaskLists(null, function (result) {
-                if (result.status) {
-                    getTasklists(function (result) {
-                        if (result.status) {
-                            showTaskLists(result.data.taskLists);
-                            taskLists = result.data.taskLists;
-                            hideLoading();
-                        }
-                        else {
-                            hideLoading();
-                            alert(result.message);
-                        }
-                    });
-                }
-                else {
-                    hideLoading();
-                    alert(result.message);
-                }
-            });
+			startSyncTaskListsAsync(null).start();
+            
         }
         else {
             loadAndShowTaskLists();
@@ -608,15 +813,8 @@
             task.dueTime = dueTime;
             task.isCompleted = isCompleted;
             task.isNew = true;
-
-            createTask(pageData.listId, task, getTaskChanges(task), function (result) {
-                if (result.status) {
-                    history.back();
-                }
-                else {
-                    alert(result.message);
-                }
-            });
+			
+			startCreateTaskAsync(pageData.listId, task, getTaskChanges(task)).start();
         }
         else {
             //编辑任务
@@ -629,63 +827,23 @@
             task.isCompleted = isCompleted;
             task.isDirty = true;
 
-            updateTask(pageData.listId, task, getTaskChanges(task), function (result) {
-                if (result.status) {
-                    loadTask(taskId, function (taskInMemory) {
-                        taskInMemory.subject = task.subject;
-                        taskInMemory.body = task.body;
-                        taskInMemory.priority = task.priority;
-                        taskInMemory.dueTime = task.dueTime;
-                        taskInMemory.isCompleted = task.isCompleted;
-                        taskInMemory.isDirty = false;
-                        history.back();
-                    });
-                }
-                else {
-                    alert(result.message);
-                }
-            });
+			startUpdateTaskAsync(pageData.listId, task, getTaskChanges(task)).start();
         }
     });
     //任务详情页面:“删除”按钮事件响应
     $(document).delegate("#taskDetailPage #deleteTaskButton", "click", function () {
-        deleteTask(pageData.listId, pageData.taskId, function (result) {
-            if (result.status) {
-                history.back();
-            }
-            else {
-                alert(result.message);
-            }
-        });
+		startDeleteTaskAsync(pageData.listId, pageData.taskId).start();
     });
     //任务页面:“刷新”按钮事件响应
     $(document).delegate("#taskPage #refreshTasksButton", "click", function () {
         if (isMobileDevice()) {
 			if (isCurrentTaskListEditable == false) {
-				loadAndShowTasks(pageData.listId, pageData.isCompleted);
+				startLoadAndShowTasksAsync(pageData.listId, pageData.isCompleted).start();
+				//loadAndShowTasks(pageData.listId, pageData.isCompleted);
 			}
 			else if (isCurrentTaskListEditable == true) {
 				showLoading();
-				syncTaskLists(pageData.listId, function (result) {
-					if (result.status) {
-						getTasksByPriority(pageData.listId, pageData.isCompleted, function (result) {
-							if (result.status) {
-								tasksInCurrentList = result.data.tasks;
-								isCurrentTaskListEditable = result.data.isListEditable;
-								showTasks(pageData.listId, result.data.tasks, pageData.isCompleted);
-								hideLoading();
-							}
-							else {
-								hideLoading();
-								alert(result.message);
-							}
-						});
-					}
-					else {
-						hideLoading();
-						alert(result.message);
-					}
-				});
+				startSyncTaskListsAsync(pageData.listId).start();
 			}
         }
         else {
@@ -697,50 +855,40 @@
         if (!isMobileDevice()) {
             window.location = this.href;
         }
-        loadAndShowTasks(pageData.listId, "all");
+		startLoadAndShowTasksAsync(pageData.listId, "all").start();
     });
     //任务页面:“已完成”Tab事件响应
     $(document).delegate("#taskPage #showCompletedTasksButton", "click", function () {
         if (!isMobileDevice()) {
             window.location = this.href;
         }
-        loadAndShowTasks(pageData.listId, "true");
+		startLoadAndShowTasksAsync(pageData.listId, "true").start();
+        //loadAndShowTasks(pageData.listId, "true");
     });
     //任务页面:“未完成”Tab事件响应
     $(document).delegate("#taskPage #showUnCompletedTasksButton", "click", function () {
         if (!isMobileDevice()) {
             window.location = this.href;
         }
-        loadAndShowTasks(pageData.listId, "false");
+		startLoadAndShowTasksAsync(pageData.listId, "false").start();
+        //loadAndShowTasks(pageData.listId, "false");
     });
 
     //以下三个事件响应函数用户在任务详情页面自动更新用户修改
     //优先级
     $(document).delegate("[name=taskPriority]", "change", function () {
         var priority = $('input[name=taskPriority]:checked').val();
-        updateTaskProperty(pageData.taskId, "priority", priority, function (result) {
-            if (!result.status) {
-                alert(result.message);
-            }
-        });
+		startUpdateTaskPropertyAsync(pageData.taskId, "priority", priority).start();
     });
     //是否完成
     $(document).delegate("#taskDetailPage #isTaskCompleted", "change", function () {
         var isCompleted = $(this).val();
-        updateTaskProperty(pageData.taskId, "isCompleted", isCompleted, function (result) {
-            if (!result.status) {
-                alert(result.message);
-            }
-        });
+		startUpdateTaskPropertyAsync(pageData.taskId, "isCompleted", isCompleted).start();
     });
     //截止时间
     $(document).delegate("#taskDetailPage #taskDueTime", "blur", function () {
         var dueTime = $(this).attr("value");
-        updateTaskProperty(pageData.taskId, "dueTime", dueTime, function (result) {
-            if (!result.status) {
-                alert(result.message);
-            }
-        });
+		startUpdateTaskPropertyAsync(pageData.taskId, "dueTime", dueTime).start();
     });
 
     //----------------------------------------------------------------
@@ -759,7 +907,7 @@
         clearTaskListPage();
     });
     $(document).delegate("#taskListPage", "pageshow", function (e, data) {
-        loadAndShowTaskLists();
+		startLoadAndShowTaskListsAsync().start();
     });
     $(document).delegate("#addTaskListPage", "pagebeforeshow", function (e, data) {
         $("#tasklistName").val("");
@@ -768,7 +916,7 @@
         clearTaskPage();
     });
     $(document).delegate("#taskPage", "pageshow", function (e, data) {
-        loadAndShowTasks(pageData.listId, pageData.isCompleted);
+		startLoadAndShowTasksAsync(pageData.listId, pageData.isCompleted).start();
 
         if (pageData.isCompleted == null || pageData.isCompleted == "all") {
             $("#taskPage #showAllTasksButton").addClass("ui-btn-active");
@@ -810,20 +958,7 @@
     });
     $(document).delegate("#setCurrentAccountPage", "pagebeforeshow", function (e, data) {
         if (isMobileDevice()) {
-            getCurrentUser(function (result) {
-                if (result.status) {
-                    if (result.data.username != null && result.data.username != "") {
-                        $('#currentUserName').html(lang.currentLoginUsernameLabel + result.data.username);
-                        $('#logoutButton').show();
-                        $('#backToLoginPageButton').hide();
-                    }
-                    else {
-                        $('#currentUserName').html(lang.currentAnonymousUsernameLabel);
-                        $('#logoutButton').hide();
-                        $('#backToLoginPageButton').show();
-                    }
-                }
-            });
+			startGetCurrentUserAsync().start();
         }
         else {
             $('#currentUserName').html('');

@@ -176,6 +176,13 @@ function callWebAPI(url, data, callback) {
     });
 }
 //向Native记录日志
+var logAsync = eval(Wind.compile('async', function (data) {
+	if (isMobileDevice()) {
+        var params = [];
+        params.push(data);
+		var result = $await($.cordovaAsync('CooperPlugin', 'debug', params));
+    }
+}));
 function log(data) {
     if (isMobileDevice()) {
         var params = [];
@@ -187,7 +194,25 @@ function log(data) {
 function hideLoadingMsg() {
     $.mobile.hidePageLoadingMsg();
 }
-//与PhoneGap Native API进行交互
+//JS端与PhoneGap Native API进行交互
+var callNativeAPIAsync = eval(Wind.compile('async', function(url, data) {
+	var items = url.split("/");
+    var serviceName = items[0];
+    var actionName = items[1].toLowerCase();
+
+    //因为参数必须是数组，所以把参数放在一个数组中
+    var params = [];
+    params.push(data);
+	
+	$await(logAsync({ step: '调用Native接口前的参数信息', parameters: data }));
+	
+    //调用Native接口
+	var result = $await($.cordovaAsync(serviceName, actionName, params));
+	if(result) {
+		$await(logAsync({ step: '调用Native接口的返回值信息', returnValue: result }));
+	}
+	return result;
+}))
 function callNativeAPI(url, data, callback) {
     var items = url.split("/");
     var serviceName = items[0];
@@ -196,8 +221,9 @@ function callNativeAPI(url, data, callback) {
     //因为参数必须是数组，所以把参数放在一个数组中
     var params = [];
     params.push(data);
-
-    log({ step: '调用Native接口前的参数信息', parameters: data });
+	
+	logAsync({ step: '调用Native接口前的参数信息', parameters: data }).start();
+    //log({ step: '调用Native接口前的参数信息', parameters: data });
 
     //调用Native接口
     Cordova.exec(
@@ -215,6 +241,23 @@ function callNativeAPI(url, data, callback) {
 }
 
 //在当前网络可用的情况下调用指定函数
+var callIfNetworkAvailableAsync = eval(Wind.compile('async', function() {
+	var result = $await(getNetworkStatusAsync());
+	if (result.status) {
+		if (result.data) {
+			return true;
+		}
+		else {
+			hideLoadingMsg();
+			alert(lang.networkUnAvailable);
+		}
+	}
+	else {
+		hideLoadingMsg();
+		alert(lang.getNetworkAvailableStatusFailed);
+	}
+	return false;
+}));
 function callIfNetworkAvailable(fn) {
     if (fn == null) {
         return;
@@ -236,6 +279,33 @@ function callIfNetworkAvailable(fn) {
     });
 }
 //用户登录
+var loginAsync = eval(Wind.compile('async', function (userName, password, type) {
+	if (isMobileDevice()) {
+        if(type == "normal") {
+			var result = $await(callIfNetworkAvailableAsync());
+			if(result) {
+				var result = $await(callNativeAPIAsync(native_refreshUrl,
+					{ key: 'Login', username: userName, password: password, type: type }));
+				return result;
+			}
+        }
+        else if(type == "anonymous") {
+            var result = $await(callNativeAPIAsync(native_refreshUrl,
+					{ key: 'Login', username: userName, password: password, type: type }));
+			return result;
+        }
+		return null;
+    }
+    else {
+        callWebAPI(
+            web_loginUrl,
+            { username: userName, password: password },
+            function (result) {
+                callback({ status: result, data: {}, message:'' });
+            }
+        );
+    }
+}));
 function login(userName, password, type, callback) {
     if (callback == null) {
         return;
@@ -273,6 +343,18 @@ function login(userName, password, type, callback) {
     }
 }
 //用户注销
+var logoutAsync = eval(Wind.compile('async', function () {
+	if (isMobileDevice()) {
+		var result = $await(callIfNetworkAvailableAsync());
+		if(result) 
+		{
+			var result1 = $await(callNativeAPIAsync(native_refreshUrl,
+				{ key: 'Logout' }));
+			return result1;
+		}
+        return null;
+    }
+}));
 function logout(callback) {
     if (callback == null) {
         return;
@@ -290,6 +372,11 @@ function logout(callback) {
     }
 }
 //获取当前网络状态
+var getNetworkStatusAsync = eval(Wind.compile('async', function() {
+	var result = $await(callNativeAPIAsync(native_getUrl, { key: 'GetNetworkStatus' }));
+	return result;
+}));
+
 function getNetworkStatus(callback) {
     if (callback == null) {
         return;
@@ -303,6 +390,18 @@ function getNetworkStatus(callback) {
     );
 }
 //获取当前用户
+var getCurrentUserAsync = eval(Wind.compile('async', function () {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_getUrl,
+            { key: 'GetCurrentUser' }));
+		return result;
+    }
+    else {
+        var loginUser = $.cookie('cooper_web_loginUser');
+        callback({ status: true, data: { username: loginUser }, message: '' });
+    }
+	return null;
+}));
 function getCurrentUser(callback) {
     if (callback == null) {
         return;
@@ -322,6 +421,99 @@ function getCurrentUser(callback) {
     }
 }
 //获取当前用户的所有任务表
+var getTasklistsAsync = eval(Wind.compile('async', function () {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_getUrl,
+			{ key: 'GetTasklists' }));
+		if(result) {
+			if (result.status) {
+				var taskLists = [];
+				var defaultTaskList = null; //默认任务列表
+				var fetchedLists = [];      //外部任务列表
+				var nativeLists = [];       //未同步过的本地任务列表
+				var cooperLists = [];       //同步过的任务列表
+				for (key in result.data) {
+					if (key == "0") {
+						defaultTaskList = new TaskList();
+						defaultTaskList.id = key;
+						defaultTaskList.name = result.data[key];
+					}
+					else if (isNaN(key)) {
+						if (key.indexOf(newTaskListTempIdPrefix) != -1) {
+							var nativeTaskList = new TaskList();
+							nativeTaskList.id = key;
+							nativeTaskList.name = result.data[key];
+							nativeLists.push(nativeTaskList);
+						}
+						else {
+							var fetechedTaskList = new TaskList();
+							fetechedTaskList.id = key;
+							fetechedTaskList.name = result.data[key];
+							fetchedLists.push(fetechedTaskList);
+						}
+					}
+					else {
+						var cooperTaskList = new TaskList();
+						cooperTaskList.id = key;
+						cooperTaskList.name = result.data[key];
+						cooperLists.push(cooperTaskList);
+					}
+				}
+
+				if (defaultTaskList != null) {
+					taskLists.push(defaultTaskList);
+				}
+				for (var index = 0; index < fetchedLists.length; index++) {
+					taskLists.push(fetchedLists[index]);
+				}
+				for (var index = 0; index < cooperLists.length; index++) {
+					taskLists.push(cooperLists[index]);
+				}
+				for (var index = 0; index < nativeLists.length; index++) {
+					taskLists.push(nativeLists[index]);
+				}
+				
+				return { status: true, data: { taskLists: taskLists }, message: '' };
+			}
+		}
+    }
+    //else {
+//        callWebAPI(
+//            web_getTasklistsUrl,
+//            {},
+//            function (result) {
+//                var taskLists = [];
+//                var defaultTaskList = new TaskList();
+//                defaultTaskList.id = '0';
+//                defaultTaskList.name = '默认列表';
+//                taskLists.push(defaultTaskList);
+//                var fetchedLists = [];
+//                var cooperLists = [];
+//                for (key in result) {
+//                    if (isNaN(key)) {
+//                        var taskList = new TaskList();
+//                        taskList.id = key;
+//                        taskList.name = result[key];
+//                        fetchedLists.push(taskList);
+//                    }
+//                    else {
+//                        var taskList = new TaskList();
+//                        taskList.id = key;
+//                        taskList.name = result[key];
+//                        cooperLists.push(taskList);
+//                    }
+//                }
+//                for (var index = 0; index < fetchedLists.length; index++) {
+//                    taskLists.push(fetchedLists[index]);
+//                }
+//                for (var index = 0; index < cooperLists.length; index++) {
+//                    taskLists.push(cooperLists[index]);
+//                }
+//                callback({ status: true, data: { taskLists: taskLists }, message: '' });
+//            }
+//        );
+//    }
+}));
 function getTasklists(callback) {
     if (callback == null) {
         return;
@@ -421,6 +613,101 @@ function getTasklists(callback) {
     }
 }
 //获取当前用户的所有任务表
+var getTasksByPriorityAsync = eval(Wind.compile('async', function (tasklistId, isCompleted) {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_getUrl,
+            { key: 'GetTasksByPriority', tasklistId: tasklistId }));
+		if(result) {
+			if(result.status) {
+				var tasks = [];
+				var tasksFromNative = result.data.tasks;
+				var isListEditable = result.data.editable;
+
+				for (var index = 0; index < result.data.sorts.length; index++) {
+					var sort = result.data.sorts[index];
+					for (var taskIdIndex = 0; taskIdIndex < sort.indexs.length; taskIdIndex++) {
+						var taskId = sort.indexs[taskIdIndex];
+						var taskFromNative = null;
+						for (var taskIndex = 0; taskIndex < tasksFromNative.length; taskIndex++) {
+							if (tasksFromNative[taskIndex]["id"] == taskId) {
+								taskFromNative = tasksFromNative[taskIndex];
+								break;
+							}
+						}
+						if (taskFromNative != null) {
+							//过滤出不符合是否完成条件的任务
+							if (isCompleted == "true" || isCompleted == "false") {
+								if (taskFromNative["isCompleted"] == null || taskFromNative["isCompleted"].toString() != isCompleted) {
+									continue;
+								}
+							}
+
+							var task = new Task();
+							task.id = taskFromNative["id"];
+							task.subject = taskFromNative["subject"] == null ? "" : taskFromNative["subject"];
+							task.body = taskFromNative["body"] == null ? "" : taskFromNative["body"];
+							task.dueTime = taskFromNative["dueTime"] == null ? "" : taskFromNative["dueTime"];
+							task.priority = taskFromNative["priority"] == null ? "" : taskFromNative["priority"];
+							task.isCompleted = taskFromNative["isCompleted"] == null ? "" : taskFromNative["isCompleted"];
+							tasks.push(task);
+						}
+					}
+				}
+				return { status: true, data: { tasks: tasks, isListEditable: isListEditable }, message: '' };
+			}
+			else {
+				return { status: false, data: {}, message: result.message };
+
+			}
+		}
+    }
+    //else {
+//        callWebAPI(
+//            web_getTasksUrl,
+//            { tasklistId: tasklistId },
+//            function (result) {
+//                var tasks = [];
+//                var tasksFromServer = result.List;
+//                var isListEditable = result.Editable;
+//
+//                for (var index = 0; index < result.Sorts.length; index++) {
+//                    var sort = result.Sorts[index];
+//                    for (var taskIdIndex = 0; taskIdIndex < sort.Indexs.length; taskIdIndex++) {
+//                        var taskId = sort.Indexs[taskIdIndex];
+//                        var taskFromServer = null;
+//                        for (var taskIndex = 0; taskIndex < tasksFromServer.length; taskIndex++) {
+//                            if (tasksFromServer[taskIndex]["ID"] == taskId) {
+//                                taskFromServer = tasksFromServer[taskIndex];
+//                                break;
+//                            }
+//                        }
+//                        if (taskFromServer != null) {
+//                            //过滤出不符合是否完成条件的任务
+//                            if (isCompleted == "true" || isCompleted == "false") {
+//                                if (taskFromServer["IsCompleted"] == null || taskFromServer["IsCompleted"].toString() != isCompleted) {
+//                                    continue;
+//                                }
+//                            }
+//
+//                            var task = new Task();
+//                            task.id = taskFromServer["ID"];
+//                            task.subject = taskFromServer["Subject"] == null ? "" : taskFromServer["Subject"];
+//                            task.body = taskFromServer["Body"] == null ? "" : taskFromServer["Body"];
+//                            task.dueTime = taskFromServer["DueTime"] == null ? "" : taskFromServer["DueTime"];
+//                            task.priority = taskFromServer["Priority"] == null ? "" : taskFromServer["Priority"];
+//                            task.isCompleted = taskFromServer["IsCompleted"] == null ? "" : taskFromServer["IsCompleted"];
+//                            tasks.push(task);
+//                        }
+//                    }
+//                }
+//                if (callback != null) {
+//                    callback({ status: true, data: { tasks: tasks, isListEditable: isListEditable }, message: '' });
+//                }
+//            }
+//        );
+//    }
+	return null;
+}));
 function getTasksByPriority(tasklistId, isCompleted, callback) {
     if (callback == null) {
         return;
@@ -478,51 +765,51 @@ function getTasksByPriority(tasklistId, isCompleted, callback) {
 			
         );
     }
-    else {
-        callWebAPI(
-            web_getTasksUrl,
-            { tasklistId: tasklistId },
-            function (result) {
-                var tasks = [];
-                var tasksFromServer = result.List;
-                var isListEditable = result.Editable;
-
-                for (var index = 0; index < result.Sorts.length; index++) {
-                    var sort = result.Sorts[index];
-                    for (var taskIdIndex = 0; taskIdIndex < sort.Indexs.length; taskIdIndex++) {
-                        var taskId = sort.Indexs[taskIdIndex];
-                        var taskFromServer = null;
-                        for (var taskIndex = 0; taskIndex < tasksFromServer.length; taskIndex++) {
-                            if (tasksFromServer[taskIndex]["ID"] == taskId) {
-                                taskFromServer = tasksFromServer[taskIndex];
-                                break;
-                            }
-                        }
-                        if (taskFromServer != null) {
-                            //过滤出不符合是否完成条件的任务
-                            if (isCompleted == "true" || isCompleted == "false") {
-                                if (taskFromServer["IsCompleted"] == null || taskFromServer["IsCompleted"].toString() != isCompleted) {
-                                    continue;
-                                }
-                            }
-
-                            var task = new Task();
-                            task.id = taskFromServer["ID"];
-                            task.subject = taskFromServer["Subject"] == null ? "" : taskFromServer["Subject"];
-                            task.body = taskFromServer["Body"] == null ? "" : taskFromServer["Body"];
-                            task.dueTime = taskFromServer["DueTime"] == null ? "" : taskFromServer["DueTime"];
-                            task.priority = taskFromServer["Priority"] == null ? "" : taskFromServer["Priority"];
-                            task.isCompleted = taskFromServer["IsCompleted"] == null ? "" : taskFromServer["IsCompleted"];
-                            tasks.push(task);
-                        }
-                    }
-                }
-                if (callback != null) {
-                    callback({ status: true, data: { tasks: tasks, isListEditable: isListEditable }, message: '' });
-                }
-            }
-        );
-    }
+   // else {
+//        callWebAPI(
+//            web_getTasksUrl,
+//            { tasklistId: tasklistId },
+//            function (result) {
+//                var tasks = [];
+//                var tasksFromServer = result.List;
+//                var isListEditable = result.Editable;
+//
+//                for (var index = 0; index < result.Sorts.length; index++) {
+//                    var sort = result.Sorts[index];
+//                    for (var taskIdIndex = 0; taskIdIndex < sort.Indexs.length; taskIdIndex++) {
+//                        var taskId = sort.Indexs[taskIdIndex];
+//                        var taskFromServer = null;
+//                        for (var taskIndex = 0; taskIndex < tasksFromServer.length; taskIndex++) {
+//                            if (tasksFromServer[taskIndex]["ID"] == taskId) {
+//                                taskFromServer = tasksFromServer[taskIndex];
+//                                break;
+//                            }
+//                        }
+//                        if (taskFromServer != null) {
+//                            //过滤出不符合是否完成条件的任务
+//                            if (isCompleted == "true" || isCompleted == "false") {
+//                                if (taskFromServer["IsCompleted"] == null || taskFromServer["IsCompleted"].toString() != isCompleted) {
+//                                    continue;
+//                                }
+//                            }
+//
+//                            var task = new Task();
+//                            task.id = taskFromServer["ID"];
+//                            task.subject = taskFromServer["Subject"] == null ? "" : taskFromServer["Subject"];
+//                            task.body = taskFromServer["Body"] == null ? "" : taskFromServer["Body"];
+//                            task.dueTime = taskFromServer["DueTime"] == null ? "" : taskFromServer["DueTime"];
+//                            task.priority = taskFromServer["Priority"] == null ? "" : taskFromServer["Priority"];
+//                            task.isCompleted = taskFromServer["IsCompleted"] == null ? "" : taskFromServer["IsCompleted"];
+//                            tasks.push(task);
+//                        }
+//                    }
+//                }
+//                if (callback != null) {
+//                    callback({ status: true, data: { tasks: tasks, isListEditable: isListEditable }, message: '' });
+//                }
+//            }
+//        );
+//    }
 }
 //创建一个任务列表
 function createTasklist(id, name, callback) {
@@ -549,6 +836,23 @@ function createTasklist(id, name, callback) {
     }
 }
 //创建一个任务
+var createTaskAsync = eval(Wind.compile('async', function (tasklistId, task, changes) {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_saveUrl,
+			{ key: 'CreateTask', tasklistId: tasklistId, task: task, changes: changes }));
+		return result;
+    }
+    //else {
+//        callWebAPI(
+//            web_syncTaskUrl,
+//            { tasklistId: tasklistId, tasklistChanges: null, changes: $.toJSON(changes), by: "ByPriority", sorts: null },
+//            function (result) {
+//                callback({ status: true, data: { }, message: '' });
+//            }
+//        );
+//    }
+	return null;
+}));
 function createTask(tasklistId, task, changes, callback) {
     if (callback == null) {
         return;
@@ -573,6 +877,23 @@ function createTask(tasklistId, task, changes, callback) {
     }
 }
 //更新一个任务
+var updateTaskAsync = eval(Wind.compile('async', function (tasklistId, task, changes) {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_saveUrl,
+			{ key: 'UpdateTask', tasklistId: tasklistId, task: task, changes: changes }));
+		return result;
+    }
+    //else {
+//        callWebAPI(
+//            web_syncTaskUrl,
+//            { tasklistId: tasklistId, tasklistChanges: null, changes: $.toJSON(changes), by: "ByPriority", sorts: null },
+//            function (result) {
+//                callback({ status: true, data: { }, message: '' });
+//            }
+//        );
+//    }
+	return null;
+}));
 function updateTask(tasklistId, task, changes, callback) {
     if (callback == null) {
         return;
@@ -597,6 +918,28 @@ function updateTask(tasklistId, task, changes, callback) {
     }
 }
 //删除一个任务
+var deleteTaskAsync = eval(Wind.compile('async', function (tasklistId, taskId) {
+	if (isMobileDevice()) {
+		var result = $await(callNativeAPIAsync(native_saveUrl,
+			{ key: 'DeleteTask', tasklistId: tasklistId, taskId: taskId }));
+		return result;
+    }
+    //else {
+//        var changes = [];
+//        var change = new ChangeLog();
+//        change.Type = 1;
+//        change.ID = taskId;
+//        changes.push(change);
+//        callWebAPI(
+//            web_syncTaskUrl,
+//            { tasklistId: tasklistId, tasklistChanges: null, changes: $.toJSON(changes), by: "ByPriority", sorts: null },
+//            function (result) {
+//                callback({ status: true, data: { }, message: '' });
+//            }
+//        );
+//    }
+	return null;
+}));
 function deleteTask(tasklistId, taskId, callback) {
     if (callback == null) {
         return;
@@ -626,6 +969,18 @@ function deleteTask(tasklistId, taskId, callback) {
     }
 }
 //同步指定的任务列表
+var syncTaskListsAsync = eval(Wind.compile('async', function (tasklistId) {
+	if (isMobileDevice()) {
+		var result = $await(callIfNetworkAvailableAsync());
+		if(result)
+		{
+			var result1 = $await(callNativeAPIAsync(native_refreshUrl,
+				{ key: 'SyncTasklists', tasklistId: tasklistId }));
+			return result1;
+		}
+        return null;
+    }
+}));
 function syncTaskLists(tasklistId, callback) {
     if (callback == null) {
         return;
